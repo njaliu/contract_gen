@@ -1,4 +1,5 @@
 import argparse
+import http.client
 import json
 import logging
 import os
@@ -227,6 +228,7 @@ def call_llm(
     # 对网络超时类故障进行最多 3 次指数退避重试（1s, 2s, 4s）。
     max_retries = 3
     retryable_err: Exception | None = None
+    last_response_preview = ""
     for attempt in range(max_retries):
         try:
             logger.info("HTTP 请求第 %d/%d 次 …", attempt + 1, max_retries)
@@ -236,7 +238,25 @@ def call_llm(
                 body = resp.read().decode("utf-8")
                 logger.info("收到响应体，长度: %d 字符", len(body))
                 logger.debug("响应体原文:\n%s", body)
-                result = json.loads(body)
+                try:
+                    result = json.loads(body)
+                except json.JSONDecodeError as e:
+                    retryable_err = e
+                    last_response_preview = body[:1000]
+                    logger.warning(
+                        "响应 JSON 解析失败(将重试): %s；响应前1000字符预览: %r",
+                        e,
+                        last_response_preview,
+                    )
+                    if attempt < max_retries - 1:
+                        delay = 2**attempt
+                        logger.info("等待 %d 秒后重试 …", delay)
+                        time.sleep(delay)
+                        continue
+                    raise RuntimeError(
+                        "调用大模型失败：响应不是合法 JSON。"
+                        f"响应前1000字符预览: {last_response_preview}"
+                    ) from e
             logger.info("JSON 解析成功，choices 数量: %d", len(result.get("choices", [])))
             break
         except error.HTTPError as e:
@@ -249,6 +269,13 @@ def call_llm(
         except error.URLError as e:
             retryable_err = e
             logger.warning("网络 URL 错误(将重试): %s", e)
+        except (
+            http.client.IncompleteRead,
+            http.client.RemoteDisconnected,
+            ConnectionResetError,
+        ) as e:
+            retryable_err = e
+            logger.warning("连接中断或响应不完整(将重试): %s", e)
 
         if attempt < max_retries - 1:
             delay = 2**attempt
@@ -256,6 +283,11 @@ def call_llm(
             time.sleep(delay)
     else:
         logger.error("已达最大重试次数，放弃请求")
+        if last_response_preview:
+            raise RuntimeError(
+                "网络或响应异常，无法获取完整合法响应。"
+                f"最近一次响应前1000字符预览: {last_response_preview}"
+            ) from retryable_err
         raise RuntimeError(f"网络错误，无法连接到大模型接口: {retryable_err}") from retryable_err
 
     try:
