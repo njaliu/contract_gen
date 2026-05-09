@@ -202,12 +202,3 @@ python3 -m pip install -r requirements.txt
 ### Q3: 为什么有些编号看起来像正文
 
 这是合同模板与目标样式的一部分：并非所有编号都是标题，映射规则已在 writer 中按文档实际格式处理。
-
----
-
-## 9. 团队协作建议
-
-- 提交前先跑一次 `--dry-run` + 单份 `--output-format both` 冒烟验证
-- 修改 `FormatSpec` 时，保留 `format_id` 稳定命名，避免历史任务不可复现
-- 通过 `manifest.json` 追踪生成结果与格式选择，便于审计与复盘
-
